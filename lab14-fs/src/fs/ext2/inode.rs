@@ -16,6 +16,9 @@ use crate::{
     },
 };
 
+use core::time::Duration;
+use crate::fs::InodeMeta;
+
 #[expect(unused)]
 pub struct Inode {
     sector_ptr: SectorPtr<RawInode>,
@@ -25,6 +28,7 @@ pub struct Inode {
     block_group_idx: usize,
     inner: Inner,
     fs: Weak<Ext2Fs>,
+    meta: InodeMeta,
 }
 
 enum Inner {
@@ -58,6 +62,19 @@ impl Inode {
             InodeType::File | InodeType::SymbolLink => Inner::File,
         };
 
+        let size = if type_ == InodeType::File {
+            ((raw_inode.size_high as usize) << 32) | (raw_inode.size_low as usize)
+        } else {
+            raw_inode.size_low as usize
+        };
+
+        let meta = InodeMeta {
+            size,
+            atime: Duration::from_secs(raw_inode.atime as u64),
+            mtime: Duration::from_secs(raw_inode.mtime as u64),
+            ctime: Duration::from_secs(raw_inode.ctime as u64),
+        };
+
         let inode = Arc::new(Inode {
             inode_id,
             type_,
@@ -65,6 +82,7 @@ impl Inode {
             inner,
             fs,
             sector_ptr,
+            meta,
         });
         inode
     }
@@ -163,16 +181,22 @@ impl super::super::Inode for Inode {
         let raw_inode: RawInode = sector_ptr.read();
         let fs = self.fs.upgrade().expect("Filesystem has been dropped");
         let block_size = fs.block_size as usize;
+        let file_size = self.size();
+
+        if offset >= file_size {
+            return Ok(0);
+        }
 
         let mut bytes_read = 0;
         let mut current_offset = offset;
+        let max_to_read = core::cmp::min(writer.avail(), file_size - offset);
 
         // Find start block and offset within block
         let mut block_index = current_offset / block_size;
         let mut offset_in_block = current_offset % block_size;
 
         // Read data block by block
-        while writer.avail() > 0 {
+        while bytes_read < max_to_read {
             let block_ptr = if block_index < 12 {
                 raw_inode.block_ptrs.direct_pointers[block_index as usize]
             } else {
@@ -183,7 +207,9 @@ impl super::super::Inode for Inode {
                 break;
             }
             let sector = fs.bid_to_sector(block_ptr);
-            let to_read = core::cmp::min(block_size - offset_in_block, writer.avail() - bytes_read);
+            let remaining_in_file = max_to_read - bytes_read;
+            let remaining_in_block = block_size - offset_in_block;
+            let to_read = core::cmp::min(remaining_in_block, remaining_in_file);
 
             debug!(
                 "Reading block_index: {}, block_ptr: {:?}, sector: {}, offset_in_block: {}, to_read: {}",
@@ -209,11 +235,16 @@ impl super::super::Inode for Inode {
     }
 
     fn metadata(&self) -> &crate::fs::InodeMeta {
-        todo!()
+        &self.meta
     }
 
     fn size(&self) -> usize {
-        todo!()
+        let raw_inode: RawInode = self.sector_ptr.read();
+        if self.type_ == InodeType::File {
+            ((raw_inode.size_high as usize) << 32) | (raw_inode.size_low as usize)
+        } else {
+            raw_inode.size_low as usize
+        }
     }
 
     fn typ(&self) -> InodeType {

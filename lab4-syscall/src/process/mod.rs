@@ -23,7 +23,7 @@ pub struct Process {
     status: AtomicU64,
     /// The threads of this process
     task: Once<Arc<Task>>,
-    // TODO-1.1: Add the name of the process, use the name passed in from `Process::new()`.
+    priority: usize,
 
     // ======================== Memory management ===============================
     vm_space: Arc<VmSpace>,
@@ -38,6 +38,7 @@ impl Process {
             pid: alloc_pid(),
             status: AtomicU64::new(Status::Uninit as u64),
             task: Once::new(),
+            priority: 5, // Default priority
             vm_space,
         });
 
@@ -57,6 +58,22 @@ impl Process {
 
     pub fn vm_space(&self) -> &Arc<VmSpace> {
         &self.vm_space
+    }
+
+    pub fn pid(&self) -> Pid {
+        self.pid
+    }
+
+    pub fn priority(&self) -> usize {
+        self.priority
+    }
+
+    pub fn status(&self) -> Status {
+        unsafe { core::mem::transmute(self.status.load(Ordering::SeqCst)) }
+    }
+
+    pub fn set_zombie(&self) {
+        self.status.store(Status::Zombie as u64, Ordering::SeqCst);
     }
 }
 
@@ -92,7 +109,10 @@ fn create_user_task(process: &Arc<Process>) -> Arc<Task> {
                 }
                 ReturnReason::UserSyscall => {
                     crate::syscall::handle_syscall(user_context, &process);
-                    // TODO-2.2: Check if the process is Zombie, if so, call the QEMU exit function here.
+                    if let Status::Zombie = process.status() {
+                        println!("QEMU: all processes finished, exiting.");
+                        exit_qemu(QemuExitCode::Success);
+                    }
                 }
                 ReturnReason::KernelEvent => unreachable!(),
             }

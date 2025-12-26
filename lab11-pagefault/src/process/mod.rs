@@ -270,6 +270,7 @@ fn create_user_task(process: &Arc<Process>, user_context: Box<UserContext>) -> A
                             .set_instruction_pointer(user_context.instruction_pointer() + 2);
                     } else if exception.cpu_exception() == Exception::StorePageFault
                         || exception.cpu_exception() == Exception::LoadPageFault
+                        || exception.cpu_exception() == Exception::InstructionPageFault
                     {
                         // Handle page fault in mm module
                         if let Err(_) = crate::mm::page_fault_handler(&process, &exception) {

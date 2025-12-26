@@ -15,6 +15,9 @@ pub struct RLimit64 {
     max: u64,
 }
 
+const RLIMIT_STACK: i32 = 3;
+const RLIMIT_AS: i32 = 9;
+
 pub fn sys_prlimit64(
     pid: i32,
     resource: i32,
@@ -31,13 +34,15 @@ pub fn sys_prlimit64(
         pid, resource, _new_limit, old_limit
     );
 
-    // TODO-1: Change the value according to the <https://man7.org/linux/man-pages/man2/getrlimit.2.html>
-    // We only support RLIMIT_STACK for now (current process only)
-    let value: usize = 0;
-    let rlim = RLimit64 {
-        cur: value as u64,
+    let mut rlim = RLimit64 {
+        cur: RLIM_INFINITY,
         max: RLIM_INFINITY,
     };
+
+    if resource == RLIMIT_STACK {
+        rlim.cur = 8 * 1024 * 1024;
+        rlim.max = 8 * 1024 * 1024;
+    }
 
     if old_limit != 0 {
         current_process

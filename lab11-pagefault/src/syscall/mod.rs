@@ -3,6 +3,7 @@ mod clone;
 mod exec;
 mod exit;
 mod mmap;
+mod mprotect;
 mod open;
 mod pipe;
 mod prlimit;
@@ -25,6 +26,7 @@ use crate::syscall::clone::sys_clone;
 use crate::syscall::exec::sys_execve;
 use crate::syscall::exit::sys_exit;
 use crate::syscall::mmap::sys_mmap;
+use crate::syscall::mprotect::sys_mprotect;
 use crate::syscall::pipe::sys_pipe2;
 use crate::syscall::prlimit::sys_prlimit64;
 use crate::syscall::read::sys_read;
@@ -81,7 +83,7 @@ pub fn handle_syscall(user_context: &mut UserContext, current_process: &Arc<Proc
         SYS_WRITEV => sys_writev(args[0] as _, args[1] as _, args[2] as _, current_process),
         SYS_NEWUNAME => sys_uname(args[0] as _, current_process),
         SYS_BRK => sys_brk(args[0] as _, current_process),
-        SYS_MPROTECT => Ok(SyscallReturn(0)),
+        SYS_MPROTECT => sys_mprotect(args[0] as _, args[1] as _, args[2] as _, current_process),
         SYS_GETPID => Ok(SyscallReturn(current_process.pid() as _)),
         SYS_GETPPID => {
             let ppid = current_process

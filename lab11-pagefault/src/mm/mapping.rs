@@ -32,6 +32,10 @@ impl VmMapping {
         self.perms.remove(flag);
     }
 
+    pub fn set_perms(&mut self, perms: PageFlags) {
+        self.perms = perms;
+    }
+
     pub fn frame(&self) -> &Frame<()> {
         &self.frame
     }

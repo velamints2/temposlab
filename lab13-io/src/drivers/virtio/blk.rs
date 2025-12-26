@@ -95,7 +95,46 @@ impl BlockDevice for VirtioBlkDevice {
         }
     }
 
-    fn write_block(&self, index: usize, data: &DmaSlice<[u8; SECTOR_SIZE], DmaStream>) {}
+    fn write_block(&self, index: usize, data: &DmaSlice<[u8; SECTOR_SIZE], DmaStream>) {
+        let req_dma = self.request_alloc.lock().alloc().unwrap();
+        let resp_dma = self.resp_alloc.lock().alloc().unwrap();
+
+        let req = BlockReq {
+            type_: ReqType::Out as _,
+            reserved: 0,
+            sector: index as u64,
+        };
+        req_dma.write(&req);
+
+        let resp = BlockResp::default();
+        resp_dma.write(&resp);
+
+        let request1 = VirtqueueCoherentRequest::from_dma_slice(&req_dma, false);
+        let request2 = VirtqueueStreamRequest::from_dma_slice(data, false); // device reads from data (Out)
+        let request3 = VirtqueueCoherentRequest::from_dma_slice(&resp_dma, true);
+
+        let requests: Vec<&dyn VirtqueueRequest> = vec![&request1, &request2, &request3];
+        let mut queue = self.request_queue.lock();
+        queue.send_request(&requests).unwrap();
+
+        // Notify the device
+        if queue.should_notify() {
+            queue.notify_device();
+        }
+
+        // Wait for completion
+        while !queue.can_pop() {
+            core::hint::spin_loop();
+        }
+
+        queue.pop_finish_request();
+
+        // Read response
+        let resp_read: BlockResp = resp_dma.read();
+        if resp_read.status != RespStatus::Ok as u8 {
+            error!("Block device write error: {:?}", resp_read.status);
+        }
+    }
 }
 
 #[repr(C)]

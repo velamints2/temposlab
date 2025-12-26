@@ -13,6 +13,34 @@ use core::str;
 pub trait FileLike: Sync + Send {
     fn read(&self, writer: VmWriter) -> Result<usize>;
     fn write(&self, reader: VmReader) -> Result<usize>;
+
+    fn as_inode(&self) -> Option<Arc<dyn crate::fs::Inode>> {
+        None
+    }
+}
+
+pub struct FileInode {
+    inode: Arc<dyn crate::fs::Inode>,
+}
+
+impl FileInode {
+    pub fn new(inode: Arc<dyn crate::fs::Inode>) -> Self {
+        Self { inode }
+    }
+}
+
+impl FileLike for FileInode {
+    fn read(&self, writer: VmWriter) -> Result<usize> {
+        self.inode.read_at(0, writer)
+    }
+
+    fn write(&self, reader: VmReader) -> Result<usize> {
+        self.inode.write_at(0, reader)
+    }
+
+    fn as_inode(&self) -> Option<Arc<dyn crate::fs::Inode>> {
+        Some(self.inode.clone())
+    }
 }
 
 pub struct Stdin;

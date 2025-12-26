@@ -10,9 +10,9 @@ use core::str;
 use crate::process::Process;
 
 pub fn handle_syscall(user_context: &mut UserContext, process: &Arc<Process>) {
-    // TODO-1.2: Define a new syscall number for printing the name and the pid of the process.
     const SYS_WRITE: usize = 64;
     const SYS_EXIT: usize = 93;
+    const SYS_GET_PRIORITY: usize = 1000;
 
     match user_context.a7() {
         SYS_WRITE => {
@@ -33,8 +33,13 @@ pub fn handle_syscall(user_context: &mut UserContext, process: &Arc<Process>) {
             user_context.set_a0(buf_len);
         }
         SYS_EXIT => {
-            // TODO-2.1: If the process call SYS_EXIT, the handle_syscall will only set the process state to Zombie. DO NOT call the QEMU exit function here.
-            exit_qemu(QemuExitCode::Success);
+            process.set_zombie();
+            println!("Process {} exited.", process.pid());
+        }
+        SYS_GET_PRIORITY => {
+            let prio = process.priority();
+            println!("[syscall] process {} priority = {}", process.pid(), prio);
+            user_context.set_a0(prio);
         }
         _ => unimplemented!(),
     }

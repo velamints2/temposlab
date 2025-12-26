@@ -1,0 +1,14 @@
+[package]
+name = "hello-world-os"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies.ostd]
+version = "0.16.1"
+
+[dependencies]
+log = "0.4"
+owo-colors = { version = "4.0", default-features = false }
+
+[workspace]
+exclude = ["target/osdk/base", "target/osdk/test-base"]

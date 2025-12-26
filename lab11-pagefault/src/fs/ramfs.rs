@@ -5,7 +5,7 @@ use alloc::{
     vec::Vec,
 };
 use ostd::{
-    mm::{FallibleVmRead, FallibleVmWrite, VmReader, VmWriter},
+    mm::{FallibleVmRead, FallibleVmWrite, Frame, FrameAllocOptions, PAGE_SIZE, VmIo, VmReader, VmWriter},
     sync::{Mutex, RwMutex},
 };
 
@@ -17,15 +17,23 @@ pub struct RamInode {
     metadata: InodeMeta,
 }
 
+struct RamFile {
+    data: Vec<Frame<()>>,
+    size: usize,
+}
+
 enum Inner {
-    File(Mutex<Vec<u8>>),
+    File(Mutex<RamFile>),
     Directory(RwMutex<BTreeMap<String, Arc<RamInode>>>),
 }
 
 impl RamInode {
     fn new_file() -> Arc<Self> {
         Arc::new(RamInode {
-            inner: Inner::File(Mutex::new(Vec::new())),
+            inner: Inner::File(Mutex::new(RamFile {
+                data: Vec::new(),
+                size: 0,
+            })),
             metadata: InodeMeta {
                 size: 0,
                 atime: core::time::Duration::new(0, 0),
@@ -50,52 +58,81 @@ impl RamInode {
 
 impl Inode for RamInode {
     fn read_at(&self, offset: usize, mut writer: ostd::mm::VmWriter) -> Result<usize> {
-        let Inner::File(data) = &self.inner else {
+        let Inner::File(file) = &self.inner else {
             return Err(Error::new(Errno::EISDIR));
         };
 
-        let data = data.lock();
-        if offset >= data.len() {
+        let file = file.lock();
+        if offset >= file.size {
             return Ok(0);
         }
 
-        let read_len = core::cmp::min(data.len() - offset, writer.avail());
-        writer
-            .write_fallible(&mut VmReader::from(
-                &(*data.as_slice())[offset..offset + read_len],
-            ))
-            .unwrap();
-        Ok(read_len)
+        let mut current_offset = offset;
+        let mut bytes_read = 0;
+        let total_to_read = core::cmp::min(file.size - offset, writer.avail());
+
+        while bytes_read < total_to_read {
+            let page_idx = current_offset / PAGE_SIZE;
+            let page_offset = current_offset % PAGE_SIZE;
+            let frame = &file.data[page_idx];
+            
+            let remaining_in_page = PAGE_SIZE - page_offset;
+            let to_read = core::cmp::min(remaining_in_page, total_to_read - bytes_read);
+
+            frame.read(page_offset, &mut writer.split_at(to_read)).unwrap();
+
+            bytes_read += to_read;
+            current_offset += to_read;
+        }
+
+        Ok(bytes_read)
     }
 
     fn write_at(&self, offset: usize, mut reader: ostd::mm::VmReader) -> Result<usize> {
-        let Inner::File(data) = &self.inner else {
+        let Inner::File(file) = &self.inner else {
             return Err(Error::new(Errno::EISDIR));
         };
 
-        let mut data = data.lock();
-        if offset > data.len() {
-            // Fill the gap with zeros
-            data.resize(offset, 0);
+        let mut file = file.lock();
+        let write_end = offset + reader.remain();
+        
+        // Ensure enough frames are allocated
+        let needed_frames = (write_end + PAGE_SIZE - 1) / PAGE_SIZE;
+        while file.data.len() < needed_frames {
+            let frame = FrameAllocOptions::new()
+                .alloc_frame()
+                .map_err(|_| Error::new(Errno::ENOMEM))?;
+            file.data.push(frame);
         }
 
-        // Expand the data vector if necessary
-        if offset + reader.remain() > data.len() {
-            data.resize(offset + reader.remain(), 0);
+        let mut current_offset = offset;
+        let mut bytes_written = 0;
+        let total_to_write = reader.remain();
+
+        while bytes_written < total_to_write {
+            let page_idx = current_offset / PAGE_SIZE;
+            let page_offset = current_offset % PAGE_SIZE;
+            let frame = &mut file.data[page_idx];
+
+            let remaining_in_page = PAGE_SIZE - page_offset;
+            let to_write = core::cmp::min(remaining_in_page, total_to_write - bytes_written);
+
+            frame.write(page_offset, &mut reader.split_at(to_write)).unwrap();
+
+            bytes_written += to_write;
+            current_offset += to_write;
         }
 
-        let write_len = core::cmp::min(data.len() - offset, reader.remain());
-        reader
-            .read_fallible(&mut VmWriter::from(
-                &mut (*data.as_mut_slice())[offset..offset + write_len],
-            ))
-            .unwrap();
-        Ok(write_len)
+        if current_offset > file.size {
+            file.size = current_offset;
+        }
+
+        Ok(bytes_written)
     }
 
     fn size(&self) -> usize {
         match &self.inner {
-            Inner::File(data) => data.lock().len(),
+            Inner::File(file) => file.lock().size,
             Inner::Directory(_) => 12,
         }
     }

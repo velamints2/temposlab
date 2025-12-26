@@ -10,7 +10,7 @@ use crate::error::{Errno, Error, Result};
 use crate::fs::Inode;
 use crate::mm::VmMapping;
 use crate::mm::area::VmArea;
-use crate::mm::fault::{PageFaultContext, PageFaultHandler};
+use crate::mm::fault::{AllocationPageFaultHandler, PageFaultContext, PageFaultHandler};
 use crate::process::Process;
 use crate::syscall::SyscallReturn;
 
@@ -42,34 +42,41 @@ pub fn sys_mmap(
     offset: u64,
     current_process: &Arc<Process>,
 ) -> Result<SyscallReturn> {
-    // Current, we only support mmap with file
-    // MAP_PRIVATE, MAP_FIXED, no MAP_ANONYMOUS
-    assert!(vaddr != 0);
-    assert!(vaddr.align_down(PAGE_SIZE as _) == vaddr);
-    assert!(offset == 0);
-    assert!(flags & 0xf == 0x2);
-    let mmap_flags = MMapFlags::from_bits_truncate(flags as u32);
-    assert!(mmap_flags == MMapFlags::MAP_FIXED);
+    // Check vaddr alignment
+    if vaddr != 0 && vaddr.align_down(PAGE_SIZE as _) != vaddr {
+        return Err(Error::new(Errno::EINVAL));
+    }
+    
+    // We currently only support MAP_PRIVATE (0x02)
+    if (flags & 0x0f) != 0x02 {
+        return Err(Error::new(Errno::EINVAL));
+    }
 
-    // Now, we can map the file
+    let mmap_flags = MMapFlags::from_bits_truncate(flags);
     let page_flags = PageFlags::from_bits_truncate(perms as _);
-    let inode = current_process
-        .file_table()
-        .get(fd as _)
-        .unwrap()
-        .file()
-        .as_inode()
-        .ok_or(Error::new(Errno::EBADF))?;
-
-    let handler = Arc::new(MMapInodeFaultHandler {
-        base_vaddr: vaddr as _,
-        inode,
-    });
-
     let memory_space = current_process.memory_space();
+    let pages = length.align_up(PAGE_SIZE as _) as usize / PAGE_SIZE;
+
+    let handler: Arc<dyn PageFaultHandler> = if mmap_flags.contains(MMapFlags::MAP_ANONYMOUS) {
+        Arc::new(AllocationPageFaultHandler)
+    } else {
+        let inode = current_process
+            .file_table()
+            .get(fd as _)
+            .ok_or(Error::new(Errno::EBADF))?
+            .file()
+            .as_inode()
+            .ok_or(Error::new(Errno::EBADF))?;
+            
+        Arc::new(MMapInodeFaultHandler {
+            base_vaddr: vaddr as _,
+            inode,
+        })
+    };
+
     memory_space.add_area(VmArea::new_with_handler(
         vaddr as _,
-        length.align_up(PAGE_SIZE as _) as usize / PAGE_SIZE,
+        pages,
         page_flags,
         handler,
     ));

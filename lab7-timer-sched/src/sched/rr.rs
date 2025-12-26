@@ -8,6 +8,8 @@ use ostd::{
     },
 };
 
+use crate::process::Process;
+
 pub struct RrScheduler {
     run_queue: SpinLock<RrRunQueue>,
 }
@@ -15,9 +17,17 @@ pub struct RrScheduler {
 impl Scheduler for RrScheduler {
     fn enqueue(&self, runnable: Arc<Task>, _flags: EnqueueFlags) -> Option<CpuId> {
         let mut run_queue = self.run_queue.disable_irq().lock();
+        
+        // Get PID from task data
+        let pid = runnable
+            .data()
+            .downcast_ref::<Arc<Process>>()
+            .map(|p| p.pid())
+            .unwrap_or(1); // Default to 1 if not a process (e.g., kernel task)
+
         run_queue.entities.push_back(Entity {
             task: runnable,
-            time_slice: TimeSlice::default(),
+            time_slice: TimeSlice::new(pid * 10),
         });
         None
     }
@@ -87,13 +97,22 @@ struct Entity {
 #[derive(Default)]
 struct TimeSlice {
     tick: usize,
+    max_tick: usize,
 }
 
 impl TimeSlice {
-    const PROCESS_TIME_SLICE: usize = 100;
+    fn new(max_tick: usize) -> Self {
+        Self {
+            tick: 0,
+            max_tick,
+        }
+    }
 
     fn elapse(&mut self) -> bool {
-        self.tick = (self.tick + 1) % Self::PROCESS_TIME_SLICE;
+        if self.max_tick == 0 {
+            return false;
+        }
+        self.tick = (self.tick + 1) % self.max_tick;
 
         self.tick == 0
     }

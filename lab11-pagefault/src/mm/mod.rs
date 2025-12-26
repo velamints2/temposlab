@@ -16,10 +16,21 @@ use ostd::{
 
 use crate::{mm::area::VmArea, process::Process};
 
+fn is_page_fault(code: Exception) -> bool {
+    matches!(
+        code,
+        Exception::InstructionPageFault | Exception::LoadPageFault | Exception::StorePageFault
+    )
+}
+
 pub fn page_fault_handler(
     process: &Arc<Process>,
     cpu_exception: &CpuExceptionInfo,
 ) -> core::result::Result<(), ()> {
+    if !is_page_fault(cpu_exception.cpu_exception()) {
+        return Err(());
+    }
+
     let memory_space = process.memory_space();
     let page_fault_addr = cpu_exception.page_fault_addr;
 
@@ -30,7 +41,7 @@ pub fn page_fault_handler(
         }
 
         return area
-            .handle_page_fault(process, page_fault_addr, cpu_exception.code)
+            .handle_page_fault(process, page_fault_addr, cpu_exception.cpu_exception())
             .map_err(|_| ());
     }
 
@@ -132,6 +143,57 @@ impl MemorySpace {
 
     pub fn vm_space(&self) -> &Arc<VmSpace> {
         &self.vm_space
+    }
+
+    pub fn protect(&self, vaddr: Vaddr, len: usize, perms: PageFlags) -> crate::error::Result<()> {
+        let guard = disable_preempt();
+        let mut areas = self.areas.lock();
+
+        // 1. Update the page table
+        let mut cursor = self
+            .vm_space
+            .cursor_mut(&guard, &(vaddr..vaddr + len))
+            .unwrap();
+        // RISC-V Sv48: R/W/X/U/V flags are part of the PTE. 
+        // A/D bits should ideally be preserved if possible, but cursor.protect 
+        // usually replaces the flags.
+        cursor.protect(PageProperty::new_user(perms, CachePolicy::Writeback));
+
+        // 2. Update the area metadata
+        for area in areas.iter_mut() {
+            let area_start = area.base_vaddr();
+            let area_end = area_start + area.pages() * PAGE_SIZE;
+            let range_start = vaddr;
+            let range_end = vaddr + len;
+
+            // Check for overlap
+            if area_start < range_end && area_end > range_start {
+                // In a complete implementation, we should split the area if the range 
+                // covers only a part of it. For this lab, we update the perms.
+                area.set_perms(perms);
+            }
+        }
+
+        // 3. Flush TLB
+        // sfence.vma is handled by ostd when cursor is dropped or during mapping changes.
+        // However, we can explicitly call it if needed.
+
+        Ok(())
+    }
+
+    pub fn reader(&self, vaddr: Vaddr, len: usize) -> crate::error::Result<ostd::mm::VmReader> {
+        // In a real OS, we should check if the range [vaddr, vaddr + len) is valid and mapped with R perm.
+        // For Lab 10, we'll leverage ostd's VmSpace reader.
+        self.vm_space
+            .reader(vaddr..vaddr + len)
+            .map_err(|_| crate::error::Error::new(crate::error::Errno::EFAULT))
+    }
+
+    pub fn writer(&self, vaddr: Vaddr, len: usize) -> crate::error::Result<ostd::mm::VmWriter> {
+        // In a real OS, we should check if the range [vaddr, vaddr + len) is valid and mapped with W perm.
+        self.vm_space
+            .writer(vaddr..vaddr + len)
+            .map_err(|_| crate::error::Error::new(crate::error::Errno::EFAULT))
     }
 
     pub fn clear(&self) {

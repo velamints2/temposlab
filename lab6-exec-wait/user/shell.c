@@ -9,6 +9,25 @@
 
 int execute(char *command)
 {
+    pid_t pid = fork();
+    if (pid == 0)
+    {
+        // Child process
+        exec(command, command, NULL);
+        // If exec returns, it failed
+        perror("exec failed");
+        exit(1);
+    }
+    else if (pid > 0)
+    {
+        // Parent process
+        int status;
+        wait(pid);
+    }
+    else
+    {
+        perror("fork failed");
+    }
     return 0;
 }
 

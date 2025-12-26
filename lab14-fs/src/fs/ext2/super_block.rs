@@ -7,7 +7,7 @@ use crate::fs::ext2::Ext2Bid;
 pub const EXT2_FIRST_SUPERBLOCK_OFFSET: usize = 1024;
 pub const EXT2_SUPERBLOCK_SIZE: usize = 1024;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct SuperBlock {
     pub idx: u32,
 

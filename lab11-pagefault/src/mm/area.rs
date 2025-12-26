@@ -95,6 +95,13 @@ impl VmArea {
         self.pages
     }
 
+    pub fn set_perms(&mut self, perms: PageFlags) {
+        self.perms = perms;
+        for mapping in self.mappings.iter_mut() {
+            mapping.set_perms(perms);
+        }
+    }
+
     pub fn contains_vaddr(&self, vaddr: Vaddr) -> bool {
         vaddr >= self.base_vaddr && vaddr < self.base_vaddr + self.pages * PAGE_SIZE
     }

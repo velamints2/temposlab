@@ -83,7 +83,7 @@ impl Ext2Fs {
             blocks_per_group: super_block.blocks_per_group,
             block_size: super_block.block_size as usize,
             inode_size: super_block.inode_size as usize,
-            super_block: SuperBlock::from(super_block),
+            super_block,
             inode_cache: Mutex::new(BTreeMap::new()),
             block_groups: blk_groups,
             self_ref: fs.clone(),

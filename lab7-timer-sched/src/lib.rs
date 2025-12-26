@@ -10,6 +10,7 @@ mod mm;
 pub mod process;
 pub mod progs;
 mod sched;
+pub mod sem;
 pub mod syscall;
 
 extern crate alloc;

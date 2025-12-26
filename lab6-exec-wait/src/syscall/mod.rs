@@ -25,6 +25,16 @@ use crate::syscall::uname::sys_uname;
 use crate::syscall::wait4::sys_wait4;
 use crate::syscall::write::{sys_write, sys_writev};
 
+use ostd::arch::qemu::{QemuExitCode, exit_qemu};
+
+pub fn sys_reboot(cmd: u32) -> Result<SyscallReturn> {
+    const RB_POWER_OFF: u32 = 0x4321FEDC;
+    if cmd == RB_POWER_OFF {
+        exit_qemu(QemuExitCode::Success);
+    }
+    Err(Error::new(Errno::EINVAL))
+}
+
 pub struct SyscallReturn(pub isize);
 
 pub fn handle_syscall(user_context: &mut UserContext, current_process: &Arc<Process>) {
@@ -34,6 +44,7 @@ pub fn handle_syscall(user_context: &mut UserContext, current_process: &Arc<Proc
     const SYS_EXIT: usize = 93;
 
     const SYS_SCHED_YIELD: usize = 124;
+    const SYS_REBOOT: usize = 142;
     const SYS_NEWUNAME: usize = 160;
     const SYS_GETPID: usize = 172;
     const SYS_GETPPID: usize = 173;
@@ -109,6 +120,7 @@ pub fn handle_syscall(user_context: &mut UserContext, current_process: &Arc<Proc
             Task::yield_now();
             Ok(SyscallReturn(0))
         }
+        SYS_REBOOT => sys_reboot(args[0] as _),
 
         SYS_WRITE => sys_write(args[0] as _, args[1] as _, args[2] as _, current_process),
         SYS_EXIT => sys_exit(args[0] as _, current_process),

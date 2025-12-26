@@ -1,4 +1,4 @@
-use alloc::{string::String, sync::Arc, vec::Vec};
+use alloc::{collections::btree_map::BTreeMap, string::String, sync::Arc, vec::Vec};
 use ostd::{
     mm::{FallibleVmRead, FallibleVmWrite, VmReader, VmWriter},
     sync::{Mutex, RwMutex},
@@ -8,13 +8,48 @@ use crate::error::{Errno, Error, Result};
 use crate::fs::{Inode, InodeMeta};
 
 pub struct RamInode {
-    data: Mutex<Vec<u8>>,
-    metadata: RwMutex<InodeMeta>,
+    inner: Inner,
+    metadata: InodeMeta,
+}
+
+enum Inner {
+    File(Mutex<Vec<u8>>),
+    Directory(RwMutex<BTreeMap<String, Arc<RamInode>>>),
+}
+
+impl RamInode {
+    fn new_file() -> Arc<Self> {
+        Arc::new(RamInode {
+            inner: Inner::File(Mutex::new(Vec::new())),
+            metadata: InodeMeta {
+                size: 0,
+                atime: core::time::Duration::new(0, 0),
+                mtime: core::time::Duration::new(0, 0),
+                ctime: core::time::Duration::new(0, 0),
+            },
+        })
+    }
+
+    fn new_directory() -> Arc<Self> {
+        Arc::new(RamInode {
+            inner: Inner::Directory(RwMutex::new(BTreeMap::new())),
+            metadata: InodeMeta {
+                size: 0,
+                atime: core::time::Duration::new(0, 0),
+                mtime: core::time::Duration::new(0, 0),
+                ctime: core::time::Duration::new(0, 0),
+            },
+        })
+    }
 }
 
 impl Inode for RamInode {
     fn read_at(&self, offset: usize, mut writer: ostd::mm::VmWriter) -> Result<usize> {
-        let data = self.data.lock();
+        let Inner::File(data) = &self.inner else {
+            return Err(Error::new(Errno::EISDIR));
+        };
+
+        let data = data.lock();
         if offset >= data.len() {
             return Ok(0);
         }
@@ -29,7 +64,11 @@ impl Inode for RamInode {
     }
 
     fn write_at(&self, offset: usize, mut reader: ostd::mm::VmReader) -> Result<usize> {
-        let mut data = self.data.lock();
+        let Inner::File(data) = &self.inner else {
+            return Err(Error::new(Errno::EISDIR));
+        };
+
+        let mut data = data.lock();
         if offset > data.len() {
             // Fill the gap with zeros
             data.resize(offset, 0);
@@ -50,15 +89,30 @@ impl Inode for RamInode {
     }
 
     fn size(&self) -> usize {
-        self.metadata.read().size
+        match &self.inner {
+            Inner::File(data) => data.lock().len(),
+            Inner::Directory(_) => 12, // Dummy size for directory
+        }
     }
 
     fn metadata(&self) -> InodeMeta {
-        self.metadata.read().clone()
+        self.metadata.clone()
     }
 
     fn open(self: Arc<Self>, name: String) -> Arc<dyn Inode> {
-        self
+        let Inner::Directory(ref entries) = self.inner else {
+            // If it is not a directory, we just return itself for now (simplification)
+            return self;
+        };
+
+        let mut entries = entries.write();
+        if let Some(inode) = entries.get(&name) {
+            inode.clone()
+        } else {
+            let new_file = RamInode::new_file();
+            entries.insert(name, new_file.clone());
+            new_file
+        }
     }
 }
 
@@ -69,15 +123,7 @@ pub struct RamFS {
 impl RamFS {
     pub fn new() -> Self {
         RamFS {
-            root: Arc::new(RamInode {
-                data: Mutex::new(Vec::new()),
-                metadata: RwMutex::new(InodeMeta {
-                    size: 0,
-                    atime: core::time::Duration::new(0, 0),
-                    mtime: core::time::Duration::new(0, 0),
-                    ctime: core::time::Duration::new(0, 0),
-                }),
-            }),
+            root: RamInode::new_directory(),
         }
     }
 }

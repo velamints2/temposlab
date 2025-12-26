@@ -53,6 +53,13 @@ fn test_blk_device_read() {
         buffer[..bytes.len()].copy_from_slice(bytes);
         dma_slice.write(&buffer);
 
-        blk_device.write_block(0, &mut dma_slice);
+        blk_device.write_block(0, &dma_slice);
+
+        // Verify the write
+        let mut read_slice = test_dma_slice_alloc.alloc().unwrap();
+        blk_device.read_block(0, &mut read_slice);
+        let read_data = read_slice.read();
+        let cstr = CStr::from_bytes_until_nul(&read_data).unwrap();
+        early_println!("Read back after write: {}", cstr.to_str().unwrap());
     }
 }
